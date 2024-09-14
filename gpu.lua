@@ -407,8 +407,8 @@ local function createPipeline(vertShaderModule, fragShaderModule)
     local pipelineLayoutInfos = ffi.new('VkPipelineLayoutCreateInfo[1]')
     local pipelineLayoutInfo = pipelineLayoutInfos[0]
     pipelineLayoutInfo.sType = vk.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
-    pipelineLayoutInfo.pSetLayouts = imageDescriptorSetLayouts
-    pipelineLayoutInfo.setLayoutCount = 1
+    pipelineLayoutInfo.pSetLayouts = nil -- imageDescriptorSetLayouts
+    pipelineLayoutInfo.setLayoutCount = 0 -- 1
 
     -- We configure all pipelines with push constants size = 128 (the
     -- maximum), no matter what actual push constants they take; this
@@ -444,7 +444,7 @@ local function createPipeline(vertShaderModule, fragShaderModule)
     pipelineInfo.pColorBlendState = colorBlendings
     pipelineInfo.pDynamicState = nil
     pipelineInfo.layout = pipelineLayout
-    pipelineInfo.renderPass = renderPass
+    pipelineInfo.renderPass = renderPass[0]
     pipelineInfo.subpass = 0
     pipelineInfo.basePipelineHandle = 0 -- VK_NULL_HANDLE
     pipelineInfo.basePipelineIndex = -1
