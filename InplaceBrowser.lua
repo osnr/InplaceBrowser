@@ -3,17 +3,17 @@ local glfw = gpu.glfw
 
 
 local quadPrelude = [[
-#version 450
+    #version 450
 
-layout(push_constant) uniform Args {
-    vec2 _resolution;
+    layout(push_constant) uniform Args {
+        vec2 _resolution;
 
-    vec2 a;
-    vec2 b;
-    vec2 c;
-    vec2 d;
-    vec4 color;
-} args;
+        vec2 a;
+        vec2 b;
+        vec2 c;
+        vec2 d;
+        vec4 color;
+    } args;
 ]]
 local quadPipeline = gpu.CompilePipelineFromShaders(quadPrelude..[[
     void main() {
@@ -33,28 +33,28 @@ local quadPipeline = gpu.CompilePipelineFromShaders(quadPrelude..[[
 ]])
 
 local glyphPrelude = [[
-#version 450
+    #version 450
 
-layout(set = 0, binding = 0) uniform sampler2D samplers[16];
-layout(push_constant) uniform Args {
-    vec2 _resolution;
+    layout(set = 0, binding = 0) uniform sampler2D samplers[16];
+    layout(push_constant) uniform Args {
+        vec2 _resolution;
 
-    int atlas;
-    vec2 atlasSize;
-    vec4 atlasGlyphBounds;
-    vec4 planeGlyphBounds;
-    vec2 pos;
-    float radians;
-    float em;
-    vec4 color;
-} args;
+        int atlas;
+        vec2 atlasSize;
+        vec4 atlasGlyphBounds;
+        vec4 planeGlyphBounds;
+        vec2 pos;
+        float radians;
+        float em;
+        vec4 color;
+    } args;
 
-vec2 rotate(vec2 v, float a) {
-    float s = sin(a);
-    float c = cos(a);
-    mat2 m = mat2(c, s, -s, c);
-    return m * v;
-}
+    vec2 rotate(vec2 v, float a) {
+        float s = sin(a);
+        float c = cos(a);
+        mat2 m = mat2(c, s, -s, c);
+        return m * v;
+    }
 ]]
 if false then
 local glyphPipeline = gpu.CompilePipelineFromShaders(glyphPrelude..[[
@@ -164,7 +164,9 @@ local window = gpu.window
 
 glfw.MakeContextCurrent(window)
 while glfw.WindowShouldClose(window) == 0 do
-   -- TODO: Render
+   gpu.DrawStart()
+   -- gpu.Draw(quadPipeline, )
+   gpu.DrawEnd()
 
    glfw.SwapBuffers(window)
    glfw.PollEvents()

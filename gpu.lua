@@ -79,6 +79,7 @@ local device = ffi.new('VkDevice[1]')
 if vk.vkCreateDevice(physicalDevice, createInfos, nil, device) ~= 0 then
    error("gpu: vkCreateDevice failed")
 end
+device = device[0]
 
 local propertyCount = ffi.new('uint32_t[1]')
 vk.vkEnumerateInstanceLayerProperties(propertyCount, nil)
@@ -164,16 +165,16 @@ swapchainCreateInfo.presentMode = presentMode
 swapchainCreateInfo.clipped = vk.VK_TRUE
 swapchainCreateInfo.oldSwapchain = 0 -- VK_NULL_HANDLE
 
-local swapchain = ffi.new('VkSwapchainKHR[1]')
-if vk.vkCreateSwapchainKHR(device[0], swapchainCreateInfos, NULL, swapchain) ~= 0 then
+local swapchains = ffi.new('VkSwapchainKHR[1]')
+if vk.vkCreateSwapchainKHR(device, swapchainCreateInfos, NULL, swapchains) ~= 0 then
    error('gpu: vkCreateSwapchainKHR failed')
 end
-swapchain = swapchain[0]
+local swapchain = swapchains[0]
 
 local swapchainImageCount = ffi.new('uint32_t[1]')
-vk.vkGetSwapchainImagesKHR(device[0], swapchain, swapchainImageCount, nil)
+vk.vkGetSwapchainImagesKHR(device, swapchain, swapchainImageCount, nil)
 local swapchainImages = ffi.new('VkImage[?]', swapchainImageCount[0])
-vk.vkGetSwapchainImagesKHR(device[0], swapchain, swapchainImageCount, swapchainImages)
+vk.vkGetSwapchainImagesKHR(device, swapchain, swapchainImageCount, swapchainImages)
 local swapchainImageFormat = surfaceFormat.format
 local swapchainExtent = extent
 local swapchainImageViews = ffi.new('VkImageView[?]', swapchainImageCount[0])
@@ -193,13 +194,13 @@ for i = 0, swapchainImageCount[0] - 1 do
    createInfo.subresourceRange.levelCount = 1
    createInfo.subresourceRange.baseArrayLayer = 0
    createInfo.subresourceRange.layerCount = 1
-   if vk.vkCreateImageView(device[0], createInfos, nil, swapchainImageViews + i) ~= 0 then
+   if vk.vkCreateImageView(device, createInfos, nil, swapchainImageViews + i) ~= 0 then
       error('gpu: vkCreateImageView failed')
    end
 end
 
 local graphicsQueues = ffi.new('VkQueue[1]')
-vk.vkGetDeviceQueue(device[0], graphicsQueueFamilyIndex, 0, graphicsQueues)
+vk.vkGetDeviceQueue(device, graphicsQueueFamilyIndex, 0, graphicsQueues)
 local graphicsQueue = graphicsQueues[0]
 local presentQueue = graphicsQueue
 local computeQueue = graphicsQueue
@@ -248,7 +249,7 @@ renderPassInfo.dependencyCount = 1
 renderPassInfo.pDependencies = dependencies
 
 local renderPass = ffi.new('VkRenderPass[1]')
-if vk.vkCreateRenderPass(device[0], renderPassInfos, nil, renderPass) ~= 0 then
+if vk.vkCreateRenderPass(device, renderPassInfos, nil, renderPass) ~= 0 then
    error('gpu: vkCreateRenderPass failed')
 end
 
@@ -264,7 +265,7 @@ for i = 0, swapchainImageCount[0] - 1 do
    framebufferInfo.width = swapchainExtent.width
    framebufferInfo.height = swapchainExtent.height
    framebufferInfo.layers = 1
-   if vk.vkCreateFramebuffer(device[0], framebufferInfos, nil, swapchainFramebuffers + i) ~= 0 then
+   if vk.vkCreateFramebuffer(device, framebufferInfos, nil, swapchainFramebuffers + i) ~= 0 then
       error('gpu: vkCreateFramebuffer failed')
    end
 end
@@ -275,7 +276,7 @@ poolInfo.sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO
 poolInfo.flags = vk.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
 poolInfo.queueFamilyIndex = graphicsQueueFamilyIndex
 local commandPools = ffi.new('VkCommandPool[1]')
-if vk.vkCreateCommandPool(device[0], poolInfos, nil, commandPools) ~= 0 then
+if vk.vkCreateCommandPool(device, poolInfos, nil, commandPools) ~= 0 then
    error('gpu: vkCreateCommandPool failed')
 end
 local commandPool = commandPools[0]
@@ -287,7 +288,7 @@ allocInfo.commandPool = commandPool
 allocInfo.level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY
 allocInfo.commandBufferCount = 1
 local commandBuffers = ffi.new('VkCommandBuffer[1]')
-if vk.vkAllocateCommandBuffers(device[0], allocInfos, commandBuffers) ~= 0 then
+if vk.vkAllocateCommandBuffers(device, allocInfos, commandBuffers) ~= 0 then
    error('gpu: vkAllocateCommandBuffers failed')
 end
 local commandBuffer = commandBuffers[0]
@@ -302,15 +303,18 @@ fenceInfo.flags = vk.VK_FENCE_CREATE_SIGNALED_BIT
 local imageAvailableSemaphores = ffi.new('VkSemaphore[1]')
 local renderFinishedSemaphores = ffi.new('VkSemaphore[1]')
 local inFlightFences = ffi.new('VkFence[1]')
-if vk.vkCreateSemaphore(device[0], semaphoreInfos, nil, imageAvailableSemaphores) ~= 0 then
+if vk.vkCreateSemaphore(device, semaphoreInfos, nil, imageAvailableSemaphores) ~= 0 then
    error('gpu: vkCreateSemaphore failed')
 end
-if vk.vkCreateSemaphore(device[0], semaphoreInfos, nil, renderFinishedSemaphores) ~= 0 then
+local imageAvailableSemaphore = imageAvailableSemaphores[0]
+if vk.vkCreateSemaphore(device, semaphoreInfos, nil, renderFinishedSemaphores) ~= 0 then
    error('gpu: vkCreateSemaphore failed')
 end
-if vk.vkCreateFence(device[0], fenceInfos, nil, inFlightFences) ~= 0 then
+local renderFinishedSemaphore = renderFinishedSemaphores[0]
+if vk.vkCreateFence(device, fenceInfos, nil, inFlightFences) ~= 0 then
    error('gpu: vkCreateFence failed')
 end
+local inFlightFence = inFlightFences[0]
 
 -------
 
@@ -423,7 +427,7 @@ local function createPipeline(vertShaderModule, fragShaderModule)
     pipelineLayoutInfo.pushConstantRangeCount = 1
 
     local pipelineLayouts = ffi.new('VkPipelineLayout[1]')
-    if vk.vkCreatePipelineLayout(device[0], pipelineLayoutInfos, nil, pipelineLayouts) ~= 0 then
+    if vk.vkCreatePipelineLayout(device, pipelineLayoutInfos, nil, pipelineLayouts) ~= 0 then
        error('gpu: vkCreatePipelineLayout failed')
     end
     local pipelineLayout = pipelineLayouts[0]
@@ -449,7 +453,7 @@ local function createPipeline(vertShaderModule, fragShaderModule)
     pipelineInfo.basePipelineHandle = 0 -- VK_NULL_HANDLE
     pipelineInfo.basePipelineIndex = -1
 
-    if vk.vkCreateGraphicsPipelines(device[0], 0, 1, pipelineInfos, nil, pipelines) ~= 0 then
+    if vk.vkCreateGraphicsPipelines(device, 0, 1, pipelineInfos, nil, pipelines) ~= 0 then
        error('gpu: vkCreateGraphicsPipelines failed')
     end
 
@@ -466,7 +470,7 @@ local function createShaderModule(spirv)
    createInfo.pCode = ffi.new('uint32_t[?]', #spirv, spirv)
 
    local shaderModules = ffi.new('VkShaderModule[1]')
-   if vk.vkCreateShaderModule(device[0], createInfos, nil, shaderModules) ~= 0 then
+   if vk.vkCreateShaderModule(device, createInfos, nil, shaderModules) ~= 0 then
       error('gpu: vkCreateShaderModule failed')
    end
    return shaderModules[0]
@@ -492,8 +496,105 @@ local function CompilePipelineFromShaders(vert, frag)
    return createPipeline(vertShaderModule, fragShaderModule)
 end
 
+local imageIndexPtr = ffi.new('uint32_t[1]')
+local function DrawStart()
+   vk.vkWaitForFences(device, 1, inFlightFences, vk.VK_TRUE, -1ULL)
+   vk.vkResetFences(device, 1, inFlightFences)
+
+   vk.vkAcquireNextImageKHR(device, swapchain, -1ULL, imageAvailableSemaphore, 0, imageIndexPtr)
+
+   vk.vkResetCommandBuffer(commandBuffer, 0)
+
+   local beginInfos = ffi.new('VkCommandBufferBeginInfo[1]')
+   local beginInfo = beginInfos[0]
+   beginInfo.sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
+   beginInfo.flags = 0 -- TODO: Should this be one-time?
+   beginInfo.pInheritanceInfo = nil
+   if vk.vkBeginCommandBuffer(commandBuffer, beginInfos) ~= 0 then
+      error('gpu: vkBeginCommandBuffer failed')
+   end
+
+   local renderPassInfos = ffi.new('VkRenderPassBeginInfo[1]')
+   local renderPassInfo = renderPassInfos[0]
+   renderPassInfo.sType = vk.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
+   renderPassInfo.renderPass = renderPass[0]
+   renderPassInfo.framebuffer = swapchainFramebuffers[imageIndexPtr[0]]
+   renderPassInfo.renderArea.offset.x = 0
+   renderPassInfo.renderArea.offset.y = 0
+   renderPassInfo.renderArea.extent = swapchainExtent
+
+   local clearColor = ffi.new('VkClearValue[1]', {{{{0.0, 0.0, 0.0, 1.0}}}})
+   renderPassInfo.clearValueCount = 1;
+   renderPassInfo.pClearValues = clearColor
+
+   vk.vkCmdBeginRenderPass(commandBuffer, renderPassInfos, vk.VK_SUBPASS_CONTENTS_INLINE)
+
+   boundPipeline = nil
+   boundDescriptorSet = nil
+end
+
+local function Draw(pipeline, ...)
+   if boundPipeline ~= pipeline then
+      vk.vkCmdBindPipeline(commandBuffer, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline)
+      boundPipeline = pipeline
+   end
+
+   -- if (boundDescriptorSet != imageDescriptorSet) {
+   --    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+   --       pipeline.pipelineLayout, 0, 1, &imageDescriptorSet, 0, NULL);
+   --    boundDescriptorSet = imageDescriptorSet;
+   -- }
+
+   local pushConstants = {...}
+   -- TODO: convert push constants, check size
+   vk.vkCmdPushConstants(commandBuffer, pipeline.pipelineLayout,
+      bit.bor(vk.VK_SHADER_STAGE_VERTEX_BIT, vk.VK_SHADER_STAGE_FRAGMENT_BIT), 0,
+      pipeline.pushConstantsSize, pushConstantsData)
+
+   -- 1 quad -> 2 triangles -> 4 vertices
+   vk.vkCmdDraw(commandBuffer, 4, 1, 0, 0)
+end
+
+local function DrawEnd()
+   vk.vkCmdEndRenderPass(commandBuffer)
+   assert(vk.vkEndCommandBuffer(commandBuffer) == 0)
+
+   local submitInfos = ffi.new('VkSubmitInfo[1]')
+   local submitInfo = submitInfos[0]
+   submitInfo.sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO
+
+   local waitStages = ffi.new('VkPipelineStageFlags[1]', vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+   submitInfo.waitSemaphoreCount = 1
+   submitInfo.pWaitSemaphores = imageAvailableSemaphores
+   submitInfo.pWaitDstStageMask = waitStages;
+
+   submitInfo.commandBufferCount = 1
+   submitInfo.pCommandBuffers = commandBuffers
+
+   submitInfo.signalSemaphoreCount = 1
+   submitInfo.pSignalSemaphores = renderFinishedSemaphores
+
+   assert(vk.vkQueueSubmit(graphicsQueue, 1, submitInfos, inFlightFence) == 0)
+
+   local presentInfos = ffi.new('VkPresentInfoKHR[1]')
+   local presentInfo = presentInfos[0]
+   presentInfo.sType = vk.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR
+   presentInfo.waitSemaphoreCount = 1
+   presentInfo.pWaitSemaphores = renderFinishedSemaphores
+
+   presentInfo.swapchainCount = 1
+   presentInfo.pSwapchains = swapchains
+   presentInfo.pImageIndices = imageIndexPtr
+   presentInfo.pResults = nil
+
+   vk.vkQueuePresentKHR(presentQueue, presentInfos)
+end
+
 return {
    glfw = glfw,
    window = window,
-   CompilePipelineFromShaders = CompilePipelineFromShaders
+   CompilePipelineFromShaders = CompilePipelineFromShaders,
+   DrawStart = DrawStart,
+   Draw = Draw,
+   DrawEnd = DrawEnd
 }
