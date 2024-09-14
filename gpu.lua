@@ -458,8 +458,38 @@ end
 
 -------
 
-local function CompilePipelineFromShaders(vert, frag)
+local function createShaderModule(spirv)
+   local createInfos = ffi.new('VkShaderModuleCreateInfo[1]')
+   local createInfo = createInfos[0]
+   createInfo.sType = vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO
+   createInfo.codeSize = #spirv * 4
+   createInfo.pCode = ffi.new('uint32_t[?]', #spirv, spirv)
 
+   local shaderModules = ffi.new('VkShaderModule[1]')
+   if vk.vkCreateShaderModule(device[0], createInfos, nil, shaderModules) ~= 0 then
+      error('gpu: vkCreateShaderModule failed')
+   end
+   return shaderModules[0]
+end
+
+local function glslc(glsl, ...)
+   local n = os.tmpname()..'.glsl'
+   local f = io.open(n, 'w')
+   f:write(glsl); f:close()
+
+   local argv = {'glslc', ..., '-mfmt=num -o -', n}
+   local task = io.popen(table.concat(argv, ' '), 'r')
+   local nums = task:read('*a'); task:close()
+   local spirv = {}
+   for token in string.gmatch(nums, '([^,\n]+)') do
+      table.insert(spirv, tonumber(token))
+   end
+   return spirv
+end
+local function CompilePipelineFromShaders(vert, frag)
+   local vertShaderModule = createShaderModule(glslc(vert, '-fshader-stage=vert'))
+   local fragShaderModule = createShaderModule(glslc(frag, '-fshader-stage=frag'))
+   return createPipeline(vertShaderModule, fragShaderModule)
 end
 
 return {
