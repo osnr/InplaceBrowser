@@ -1,3 +1,5 @@
+package.path = package.path .. ";./vendor/luajit-glfw/?.lua;./vendor/vulkan/?.lua"
+
 local ffi = require 'ffi'
 local vk = require 'vulkan1'
 local glfw = require 'glfw' { 'glfw', bind_vulkan = true }
@@ -456,13 +458,12 @@ end
 
 -------
 
+local function CompilePipelineFromShaders(vert, frag)
 
-glfw.MakeContextCurrent(window)
-while glfw.WindowShouldClose(window) == 0 do
-   -- TODO: Render
-
-   glfw.SwapBuffers(window)
-   glfw.PollEvents()
 end
 
-glfw.Terminate()
+return {
+   glfw = glfw,
+   window = window,
+   CompilePipelineFromShaders = CompilePipelineFromShaders
+}
