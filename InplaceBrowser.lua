@@ -1,6 +1,7 @@
-local gpu = require 'gpu'
-local glfw = gpu.glfw
+local Gpu = require 'gpu'
+local glfw = Gpu.glfw
 
+local gpu = Gpu.New()
 
 local quadPrelude = [[
     #version 450
@@ -15,7 +16,7 @@ local quadPrelude = [[
         vec4 color;
     } args;
 ]]
-local quadPipeline = gpu.CompilePipelineFromShaders(quadPrelude..[[
+local quadPipeline = gpu:CompilePipelineFromShaders(quadPrelude..[[
     void main() {
         vec2 vertices[4] = vec2[4](args.a, args.b, args.d, args.c);
         vec2 v = vertices[gl_VertexIndex];
@@ -57,7 +58,7 @@ local glyphPrelude = [[
     }
 ]]
 if false then
-local glyphPipeline = gpu.CompilePipelineFromShaders(glyphPrelude..[[
+local glyphPipeline = gpu:CompilePipelineFromShaders(glyphPrelude..[[
     void main() {
         float em = args.em;
         float radians = args.radians;
@@ -164,9 +165,9 @@ local window = gpu.window
 
 glfw.MakeContextCurrent(window)
 while glfw.WindowShouldClose(window) == 0 do
-   gpu.DrawStart()
-   -- gpu.Draw(quadPipeline, )
-   gpu.DrawEnd()
+   gpu:DrawStart()
+   -- gpu:Draw(quadPipeline, )
+   gpu:DrawEnd()
 
    glfw.SwapBuffers(window)
    glfw.PollEvents()
