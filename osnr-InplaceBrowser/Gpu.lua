@@ -33,7 +33,6 @@ function Gpu:Init()
    createInfo.flags = 0x00000001
    local instance = ffi.new('VkInstance[1]')
    local res = vk.vkCreateInstance(createInfo, nil, instance)
-   print(res)
    instance = instance[0]
 
    local physicalDeviceCount = ffi.new('uint32_t[1]')
@@ -75,8 +74,7 @@ function Gpu:Init()
       'VK_KHR_maintenance3'
    })
 
-   local createInfos = ffi.new('VkDeviceCreateInfo[1]')
-   createInfo = createInfos[0]
+   local createInfo = ffi.new('VkDeviceCreateInfo')
    createInfo.sType = vk.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO
    createInfo.pQueueCreateInfos = queueCreateInfos
    createInfo.queueCreateInfoCount = 1
@@ -85,7 +83,7 @@ function Gpu:Init()
    createInfo.enabledExtensionCount = 3
    createInfo.ppEnabledExtensionNames = deviceExtensions
    self.devices = ffi.new('VkDevice[1]')
-   if vk.vkCreateDevice(physicalDevice, createInfos, nil, self.devices) ~= 0 then
+   if vk.vkCreateDevice(physicalDevice, createInfo, nil, self.devices) ~= 0 then
       error("gpu: vkCreateDevice failed")
    end
    self.device = self.devices[0]; local device = self.device
@@ -428,12 +426,11 @@ function Gpu:CreatePipeline(vertShaderModule, fragShaderModule)
     -- maximum), no matter what actual push constants they take; this
     -- is so that pipelines are all layout-compatible so we can reuse
     -- descriptor set between pipelines without needing to rebind it.
-    local pushConstantRanges = ffi.new('VkPushConstantRange[1]')
-    local pushConstantRange = pushConstantRanges[0]
+    local pushConstantRange = ffi.new('VkPushConstantRange')
     pushConstantRange.offset = 0;
     pushConstantRange.size = 128;
     pushConstantRange.stageFlags = bit.bor(vk.VK_SHADER_STAGE_VERTEX_BIT, vk.VK_SHADER_STAGE_FRAGMENT_BIT)
-    pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges
+    pipelineLayoutInfo.pPushConstantRanges = pushConstantRange
     pipelineLayoutInfo.pushConstantRangeCount = 1
 
     local pipelineLayouts = ffi.new('VkPipelineLayout[1]')
@@ -442,10 +439,9 @@ function Gpu:CreatePipeline(vertShaderModule, fragShaderModule)
     end
     local pipelineLayout = pipelineLayouts[0]
 
-    local pipelines = ffi.new('VkPipeline[1]')
+    local pipeline = ffi.new('VkPipeline[1]')
 
-    local pipelineInfos = ffi.new('VkGraphicsPipelineCreateInfo[1]')
-    local pipelineInfo = pipelineInfos[0]
+    local pipelineInfo = ffi.new('VkGraphicsPipelineCreateInfo')
     pipelineInfo.sType = vk.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO
     pipelineInfo.stageCount = 2
     pipelineInfo.pStages = shaderStages
@@ -463,22 +459,24 @@ function Gpu:CreatePipeline(vertShaderModule, fragShaderModule)
     pipelineInfo.basePipelineHandle = 0 -- VK_NULL_HANDLE
     pipelineInfo.basePipelineIndex = -1
 
-    if vk.vkCreateGraphicsPipelines(self.device, 0, 1, pipelineInfos, nil, pipelines) ~= 0 then
+    if vk.vkCreateGraphicsPipelines(self.device, 0, 1, pipelineInfo, nil, pipeline) ~= 0 then
        error('gpu: vkCreateGraphicsPipelines failed')
     end
 
-    -- FIXME: return pipeline design
+    return {
+       pipeline = pipeline[0],
+       pipelineLayout = pipelineLayout
+    }
 end
 
 function Gpu:CreateShaderModule(spirv)
-   local createInfos = ffi.new('VkShaderModuleCreateInfo[1]')
-   local createInfo = createInfos[0]
+   local createInfo = ffi.new('VkShaderModuleCreateInfo')
    createInfo.sType = vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO
    createInfo.codeSize = #spirv * 4
    createInfo.pCode = ffi.new('uint32_t[?]', #spirv, spirv)
 
    local shaderModules = ffi.new('VkShaderModule[1]')
-   if vk.vkCreateShaderModule(self.device, createInfos, nil, shaderModules) ~= 0 then
+   if vk.vkCreateShaderModule(self.device, createInfo, nil, shaderModules) ~= 0 then
       error('gpu: vkCreateShaderModule failed')
    end
    return shaderModules[0]
@@ -498,10 +496,28 @@ local function glslc(glsl, ...)
    end
    return spirv
 end
+local _pipelineNum = 0
+ffi.cdef [[
+typedef struct vec2 { float x; float y; } vec2;
+typedef struct vec3 { float x; float y; float z; } vec3;
+typedef struct vec4 { float x; float y; float z; float w; } vec4;
+]]
 function Gpu:CompilePipelineFromShaders(vert, frag)
+   -- FIXME: assumes vert and frag are the same.
+   local fields = vert:match("layout%(push_constant%) uniform Args%s*{(.-)}%s*args;")
+   fields = fields:gsub("([^%w])vec4([^%w])", "%1__declspec(align(sizeof(vec4))) vec4%2")
+   fields = fields:gsub("([^%w])vec3([^%w])", "%1__declspec(align(sizeof(vec3))) vec3%2")
+   local structName = "Args".._pipelineNum
+   ffi.cdef([[typedef struct ]]..structName..[[ {]]..fields..
+      [[} ]]..structName..[[;]])
+   _pipelineNum = _pipelineNum + 1
+
    local vertShaderModule = self:CreateShaderModule(glslc(vert, '-fshader-stage=vert'))
    local fragShaderModule = self:CreateShaderModule(glslc(frag, '-fshader-stage=frag'))
-   return self:CreatePipeline(vertShaderModule, fragShaderModule)
+
+   local pipeline = self:CreatePipeline(vertShaderModule, fragShaderModule)
+   pipeline.structName = structName
+   return pipeline
 end
 
 function Gpu:DrawStart()
@@ -521,8 +537,7 @@ function Gpu:DrawStart()
       error('gpu: vkBeginCommandBuffer failed')
    end
 
-   local renderPassInfos = ffi.new('VkRenderPassBeginInfo[1]')
-   local renderPassInfo = renderPassInfos[0]
+   local renderPassInfo = ffi.new('VkRenderPassBeginInfo')
    renderPassInfo.sType = vk.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
    renderPassInfo.renderPass = self.renderPass[0]
    renderPassInfo.framebuffer = self.swapchainFramebuffers[self.imageIndexPtr[0]]
@@ -536,7 +551,7 @@ function Gpu:DrawStart()
    renderPassInfo.clearValueCount = 1;
    renderPassInfo.pClearValues = clearColor
 
-   vk.vkCmdBeginRenderPass(self.commandBuffer, renderPassInfos, vk.VK_SUBPASS_CONTENTS_INLINE)
+   vk.vkCmdBeginRenderPass(self.commandBuffer, renderPassInfo, vk.VK_SUBPASS_CONTENTS_INLINE)
 
    boundPipeline = nil
    boundDescriptorSet = nil
@@ -554,11 +569,11 @@ function Gpu:Draw(pipeline, ...)
    --    boundDescriptorSet = imageDescriptorSet;
    -- }
 
-   local pushConstants = {...}
+   local pushConstantsData = ffi.new(pipeline.structName, ...)
    -- TODO: convert push constants, check size
    vk.vkCmdPushConstants(self.commandBuffer, pipeline.pipelineLayout,
       bit.bor(vk.VK_SHADER_STAGE_VERTEX_BIT, vk.VK_SHADER_STAGE_FRAGMENT_BIT), 0,
-      pipeline.pushConstantsSize, pushConstantsData)
+      ffi.sizeof(pipeline.structName), pushConstantsData)
 
    -- 1 quad -> 2 triangles -> 4 vertices
    vk.vkCmdDraw(self.commandBuffer, 4, 1, 0, 0)

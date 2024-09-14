@@ -30,6 +30,7 @@ local quadPipeline = gpu:CompilePipelineFromShaders(quadPrelude..[[
 
     void main() {
         outColor = args.color;
+        // outColor = vec4(1,0,0,1);
     }
 ]])
 
@@ -166,7 +167,8 @@ local window = gpu.window
 glfw.MakeContextCurrent(window)
 while glfw.WindowShouldClose(window) == 0 do
    gpu:DrawStart()
-   -- gpu:Draw(quadPipeline, )
+   gpu:Draw(quadPipeline, {1600, 1200}, {0, 0}, {300, 300}, {800, 20}, {900, 400},
+      {1.0, 0, 0, 1.0})
    gpu:DrawEnd()
 
    glfw.SwapBuffers(window)
