@@ -1130,8 +1130,8 @@ function bind_clib()
   end
 
   function funcs.GetCursorPos(window)
-    local xpos = ffi.new('int[1]')
-    local ypos = ffi.new('int[1]')
+    local xpos = ffi.new('double[1]')
+    local ypos = ffi.new('double[1]')
 
     clib.glfwGetCursorPos(window, xpos, ypos)
 

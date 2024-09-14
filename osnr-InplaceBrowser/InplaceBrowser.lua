@@ -1,4 +1,5 @@
 local Gpu = require 'Gpu'
+local ffi = require 'ffi'
 local glfw = Gpu.glfw
 
 local gpu = Gpu.New()
@@ -30,7 +31,6 @@ local quadPipeline = gpu:CompilePipelineFromShaders(quadPrelude..[[
 
     void main() {
         outColor = args.color;
-        // outColor = vec4(1,0,0,1);
     }
 ]])
 
@@ -165,10 +165,13 @@ end
 local window = gpu.window
 
 glfw.MakeContextCurrent(window)
+local w, h = glfw.GetWindowSize(window)
 while glfw.WindowShouldClose(window) == 0 do
+   local mouseX, mouseY = glfw.GetCursorPos(window)
+
    gpu:DrawStart()
-   gpu:Draw(quadPipeline, {1600, 1200}, {0, 0}, {300, 300}, {800, 20}, {900, 400},
-      {1.0, 0, 0, 1.0})
+   gpu:Draw(quadPipeline, {w, h},
+      {0, 0}, {mouseX, mouseY}, {800, 20}, {900, 400}, {1.0, 0, 0, 1.0})
    gpu:DrawEnd()
 
    glfw.SwapBuffers(window)
