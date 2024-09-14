@@ -107,9 +107,9 @@ presentQueueFamilyIndex = graphicsQueueFamilyIndex
 
 -- Figure out capabilities/format/mode of physical device for surface.
 local capabilities = ffi.new('VkSurfaceCapabilitiesKHR[1]')
+boop = capabilities
 vk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface[0], capabilities)
 capabilities = capabilities[0]
-print(capabilities.currentExtent)
 local imageCount = capabilities.minImageCount + 1
 if capabilities.maxImageCount > 0 and imageCount > capabilities.maxImageCount then
    imageCount = capabilities.maxImageCount
@@ -522,6 +522,8 @@ local function DrawStart()
    renderPassInfo.renderArea.offset.x = 0
    renderPassInfo.renderArea.offset.y = 0
    renderPassInfo.renderArea.extent = swapchainExtent
+   -- print("render", swapchainExtent.width, swapchainExtent.height,
+   --    renderPassInfo.renderArea.extent.width, renderPassInfo.renderArea.extent.height)
 
    local clearColor = ffi.new('VkClearValue[1]', {{{{0.0, 0.0, 0.0, 1.0}}}})
    renderPassInfo.clearValueCount = 1;
