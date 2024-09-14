@@ -2,7 +2,13 @@ package.path = package.path .. ";./vendor/luajit-glfw/?.lua;./vendor/vulkan/?.lu
 
 local ffi = require 'ffi'
 local vk = require 'vulkan1'
-local glfw = require 'glfw' { 'glfw', bind_vulkan = true }
+local status, glfw = pcall(function()
+   return (require('glfw')({ 'glfw', bind_vulkan = true }))
+end)
+if not status then
+   -- This is a hack for macOS.
+   glfw = (require('glfw')({ '/opt/homebrew/lib/libglfw.dylib', bind_vulkan = true }))
+end
 local GLFW = glfw.const
 
 local Gpu = {}
@@ -39,11 +45,10 @@ function Gpu:Init()
 
    local physicalDeviceCount = ffi.new('uint32_t[1]')
    vk.vkEnumeratePhysicalDevices(instance, physicalDeviceCount, nil)
-   print(physicalDeviceCount[0])
 
-   local physicalDevices = ffi.new('VkPhysicalDevice[?]', physicalDeviceCount[0])
-   vk.vkEnumeratePhysicalDevices(instance, physicalDeviceCount, physicalDevices)
-   local physicalDevice = physicalDevices[0]
+   self.physicalDevices = ffi.new('VkPhysicalDevice[?]', physicalDeviceCount[0])
+   vk.vkEnumeratePhysicalDevices(instance, physicalDeviceCount, self.physicalDevices)
+   local physicalDevice = self.physicalDevices[0]; self.physicalDevice = physicalDevice
 
    local graphicsQueueFamilyIndex = math.maxinteger
    local queueFamilyCount = ffi.new('uint32_t[1]')
@@ -365,6 +370,274 @@ function Gpu:InitImageManagement()
 
    vk.vkAllocateDescriptorSets(self.device, allocInfo, self.imageDescriptorSetPtr)
    self.imageDescriptorSet = self.imageDescriptorSetPtr[0]
+
+   self._nextImageHandle = 0
+end
+
+function Gpu:CopyImageToGpu(im)
+   local imageHandle = self._nextImageHandle
+   self._nextImageHandle = imageHandle + 1
+
+   local function findMemoryType(typeFilter, properties)
+      local memProperties = ffi.new('VkPhysicalDeviceMemoryProperties')
+      vkGetPhysicalDeviceMemoryProperties(self.physicalDevice, memProperties)
+
+      for i = 0, memProperties.memoryTypeCount - 1 do
+         if bit.band(typeFilter, bit.lshift(1, i)) ~= 0 and bit.band(memProperties.memoryTypes[i].propertyFlags, properties) == properties then
+            return i
+         end
+      end
+      error('Gpu: findMemoryType failed')
+   end
+   local function createBuffer(size, usage, properties, buffer, bufferMemory)
+      local bufferInfo = ffi.new('VkBufferCreateInfo')
+      bufferInfo.sType = vk.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO
+      bufferInfo.size = size
+      bufferInfo.usage = usage
+      bufferInfo.sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE
+
+      assert(vk.vkCreateBuffer(device, bufferInfo, nil, buffer) == 0)
+
+      local memRequirements = ffi.new('VkMemoryRequirements')
+      vkGetBufferMemoryRequirements(device, buffer[0], memRequirements)
+
+      local allocInfo = ffi.new('VkMemoryAllocateInfo')
+      allocInfo.sType = vk.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO
+      allocInfo.allocationSize = memRequirements.size
+      allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
+
+      assert(vkAllocateMemory(device, allocInfo, nil, bufferMemory) == 0)
+      vkBindBufferMemory(device, buffer[0], bufferMemory[0], 0)
+   end
+   local function createImage(width, height, format, tiling, usage, properties, image, imageMemory)
+      local imageInfo = ffi.new("VkImageCreateInfo")
+      imageInfo.sType = vk.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO
+      imageInfo.imageType = vk.VK_IMAGE_TYPE_2D
+      imageInfo.extent.width = width
+      imageInfo.extent.height = height
+      imageInfo.extent.depth = 1
+      imageInfo.mipLevels = 1
+      imageInfo.arrayLayers = 1
+      imageInfo.format = format
+      imageInfo.tiling = tiling
+      imageInfo.initialLayout = vk.VK_IMAGE_LAYOUT_UNDEFINED
+      imageInfo.usage = usage
+      imageInfo.samples = vk.VK_SAMPLE_COUNT_1_BIT
+      imageInfo.sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE
+
+      local image = ffi.new("VkImage[1]")
+      assert(vk.vkCreateImage(device, imageInfo, nil, image) == 0)
+
+      local memRequirements = ffi.new("VkMemoryRequirements")
+      vk.vkGetImageMemoryRequirements(device, image[0], memRequirements)
+
+      local allocInfo = ffi.new("VkMemoryAllocateInfo")
+      allocInfo.sType = vk.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO
+      allocInfo.allocationSize = memRequirements.size
+      allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
+
+      assert(vk.vkAllocateMemory(device, allocInfo, nil, imageMemory) == 0)
+      vk.vkBindImageMemory(device, image[0], imageMemory[0], 0)
+   end
+   local function beginSingleTimeCommands()
+      local allocInfo = ffi.new("VkCommandBufferAllocateInfo", {
+         sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+         level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+         commandPool = commandPool,
+         commandBufferCount = 1
+      })
+
+      local commandBuffer = ffi.new("VkCommandBuffer[1]")
+      assert(vk.vkAllocateCommandBuffers(device, allocInfo, commandBuffer[0]) == 0)
+
+      local beginInfo = ffi.new("VkCommandBufferBeginInfo", {
+         sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+         flags = vk.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+      })
+
+      assert(vk.vkBeginCommandBuffer(commandBuffer[0], beginInfo) == 0)
+
+      return commandBuffer[0]
+   end
+   local function endSingleTimeCommands(commandBuffer)
+      assert(vk.vkEndCommandBuffer(commandBuffer) == 0)
+
+      local submitInfo = ffi.new("VkSubmitInfo", {
+         sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+         commandBufferCount = 1,
+         pCommandBuffers = commandBuffer
+      })
+
+      assert(vk.vkQueueSubmit(graphicsQueue, 1, submitInfo, vk.VK_NULL_HANDLE) == 0)
+      assert(vk.vkQueueWaitIdle(graphicsQueue) == 0)
+
+      vk.vkFreeCommandBuffers(device, commandPool, 1, commandBuffer)
+   end
+   local function transitionImageLayout(image, format, oldLayout, newLayout)
+      local commandBuffer = beginSingleTimeCommands()
+
+      local barrier = ffi.new("VkImageMemoryBarrier", {
+         sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+         oldLayout = oldLayout,
+         newLayout = newLayout,
+         srcQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
+         dstQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
+         image = image,
+         subresourceRange = {
+            aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+            baseMipLevel = 0,
+            levelCount = 1,
+            baseArrayLayer = 0,
+            layerCount = 1
+         }
+      })
+
+      local sourceStage, destinationStage
+      if oldLayout == vk.VK_IMAGE_LAYOUT_UNDEFINED and newLayout == vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL then
+         barrier.srcAccessMask = 0
+         barrier.dstAccessMask = vk.VK_ACCESS_TRANSFER_WRITE_BIT
+         sourceStage = vk.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+         destinationStage = vk.VK_PIPELINE_STAGE_TRANSFER_BIT
+      elseif oldLayout == vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL and newLayout == vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL then
+         barrier.srcAccessMask = vk.VK_ACCESS_TRANSFER_WRITE_BIT
+         barrier.dstAccessMask = vk.VK_ACCESS_SHADER_READ_BIT
+         sourceStage = vk.VK_PIPELINE_STAGE_TRANSFER_BIT
+         destinationStage = vk.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+      else
+         error()
+      end
+
+      vk.vkCmdPipelineBarrier(commandBuffer,
+         sourceStage, destinationStage,
+         0,
+         0, nil,
+         0, nil,
+         1, barrier)
+
+      endSingleTimeCommands(commandBuffer)
+   end
+
+   -- TODO: Image must be RGBA.
+
+   local size = im.width * im.height * 4;
+
+   local stagingBuffer = ffi.new("VkBuffer[1]")
+   local stagingBufferMemory = ffi.new("VkDeviceMemory[1]")
+   createBuffer(size, vk.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+      vk.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT + vk.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      stagingBuffer, stagingBufferMemory)
+
+   createImage(im.width, im.height,
+      vk.VK_FORMAT_R8G8B8A8_SRGB, vk.VK_IMAGE_TILING_OPTIMAL,
+      vk.VK_IMAGE_USAGE_TRANSFER_DST_BIT + vk.VK_IMAGE_USAGE_SAMPLED_BIT,
+      vk.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+      block.textureImage, block.textureImageMemory)
+
+   local viewInfo = ffi.new("VkImageViewCreateInfo", {
+      sType = vk.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+      image = block.textureImage,
+      viewType = vk.VK_IMAGE_VIEW_TYPE_2D,
+      format = vk.VK_FORMAT_R8G8B8A8_SRGB,
+      subresourceRange = {
+         aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+         baseMipLevel = 0,
+         levelCount = 1,
+         baseArrayLayer = 0,
+         layerCount = 1
+      }
+   })
+   assert(vk.vkCreateImageView(device, viewInfo, nil, block.textureImageView) == 0)
+
+   local samplerInfo = ffi.new("VkSamplerCreateInfo", {
+      sType = vk.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+      magFilter = vk.VK_FILTER_LINEAR,
+      minFilter = vk.VK_FILTER_LINEAR,
+      addressModeU = vk.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+      addressModeV = vk.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+      addressModeW = vk.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+      anisotropyEnable = vk.VK_FALSE,
+      borderColor = vk.VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+      unnormalizedCoordinates = vk.VK_FALSE,
+      compareEnable = vk.VK_FALSE,
+      compareOp = vk.VK_COMPARE_OP_ALWAYS,
+      mipmapMode = vk.VK_SAMPLER_MIPMAP_MODE_LINEAR,
+      mipLodBias = 0.0,
+      minLod = 0.0,
+      maxLod = 0.0
+   })
+   assert(vk.vkCreateSampler(device, samplerInfo, nil, block.textureSampler) == 0)
+
+   local data = ffi.new("void*[1]")
+   assert(vk.vkMapMemory(device, stagingBufferMemory[0], 0, size, 0, data) == 0)
+   -- for y = 0, im.height - 1 do
+   --    ffi.copy(data[0] + y * im.width * 4, im.data + y * im.bytesPerRow, im.width * 4)
+   -- end
+   vk.vkUnmapMemory(device, stagingBufferMemory[0])
+
+   transitionImageLayout(block.textureImage, vk.VK_FORMAT_R8G8B8A8_SRGB,
+      vk.VK_IMAGE_LAYOUT_UNDEFINED, vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+
+   local commandBuffer = beginSingleTimeCommands()
+
+   local region = ffi.new("VkBufferImageCopy", {
+      bufferOffset = 0,
+      bufferRowLength = 0,
+      bufferImageHeight = 0,
+      imageSubresource = {
+         aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+         mipLevel = 0,
+         baseArrayLayer = 0,
+         layerCount = 1
+      },
+      imageOffset = ffi.new("VkOffset3D", {0, 0, 0}),
+      imageExtent = ffi.new("VkExtent3D", {im.width, im.height, 1})
+   })
+
+   vk.vkCmdCopyBufferToImage(commandBuffer, stagingBuffer[0], block.textureImage,
+      vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, region)
+
+   endSingleTimeCommands(commandBuffer)
+
+   transitionImageLayout(block.textureImage, vk.VK_FORMAT_R8G8B8A8_SRGB,
+      vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+
+   vk.vkDestroyBuffer(device, stagingBuffer[0], nil)
+   vk.vkFreeMemory(device, stagingBufferMemory[0], nil)
+
+   self.didInitializeDescriptors = false
+   local imageInfo = ffi.new("VkDescriptorImageInfo", {
+      imageLayout = vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      imageView = block.textureImageView,
+      sampler = block.textureSampler
+   })
+
+   if not self.didInitializeDescriptors then
+      local descriptorWrites = ffi.new("VkWriteDescriptorSet[?]", getMaxImages())
+      for i = 0, self:GetMaxImages() - 1 do
+         descriptorWrites[i].sType = vk.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET
+         descriptorWrites[i].dstSet = self.imageDescriptorSet
+         descriptorWrites[i].dstBinding = 0
+         descriptorWrites[i].dstArrayElement = i
+         descriptorWrites[i].descriptorType = vk.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+         descriptorWrites[i].descriptorCount = 1
+         descriptorWrites[i].pImageInfo = imageInfo
+      end
+      vk.vkUpdateDescriptorSets(device, self:GetMaxImages(), descriptorWrites, 0, nil)
+      didInitializeDescriptors = true
+   else
+      local descriptorWrite = ffi.new("VkWriteDescriptorSet", {
+         sType = vk.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+         dstSet = imageDescriptorSet,
+         dstBinding = 0,
+         dstArrayElement = imageId,
+         descriptorType = vk.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         descriptorCount = 1,
+         pImageInfo = imageInfo
+      })
+      vk.vkUpdateDescriptorSets(device, 1, descriptorWrite, 0, nil)
+   end
+
+   return imageHandle
 end
 
 function Gpu:CreatePipeline(vertShaderModule, fragShaderModule)
