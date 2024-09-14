@@ -1,4 +1,4 @@
-local Gpu = require 'gpu'
+local Gpu = require 'Gpu'
 local glfw = Gpu.glfw
 
 local gpu = Gpu.New()
