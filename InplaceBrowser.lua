@@ -1,6 +1,37 @@
 local gpu = require 'gpu'
 local glfw = gpu.glfw
 
+
+local quadPrelude = [[
+#version 450
+
+layout(push_constant) uniform Args {
+    vec2 _resolution;
+
+    vec2 a;
+    vec2 b;
+    vec2 c;
+    vec2 d;
+    vec4 color;
+} args;
+]]
+local quadPipeline = gpu.CompilePipelineFromShaders(quadPrelude..[[
+    void main() {
+        vec2 vertices[4] = vec2[4](args.a, args.b, args.d, args.c);
+        vec2 v = vertices[gl_VertexIndex];
+
+        v = (2.0*v - args._resolution)/args._resolution;
+        gl_Position = vec4(v, 0.0, 1.0);
+    }
+]], quadPrelude..[[
+
+    layout(location = 0) out vec4 outColor;
+
+    void main() {
+        outColor = args.color;
+    }
+]])
+
 local glyphPrelude = [[
 #version 450
 
@@ -25,6 +56,7 @@ vec2 rotate(vec2 v, float a) {
     return m * v;
 }
 ]]
+if false then
 local glyphPipeline = gpu.CompilePipelineFromShaders(glyphPrelude..[[
     void main() {
         float em = args.em;
@@ -126,6 +158,7 @@ local glyphPipeline = gpu.CompilePipelineFromShaders(glyphPrelude..[[
         }
     }
 ]])
+end
 
 local window = gpu.window
 
