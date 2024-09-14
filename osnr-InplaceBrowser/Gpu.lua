@@ -356,15 +356,15 @@ function Gpu:InitImageManagement()
    poolInfo.maxSets = 100
    assert(vk.vkCreateDescriptorPool(self.device, poolInfo, nil, descriptorPool) == 0)
 
-   local imageDescriptorSetPtr = ffi.new('VkDescriptorSet[1]')
+   self.imageDescriptorSetPtr = ffi.new('VkDescriptorSet[1]')
    local allocInfo = ffi.new('VkDescriptorSetAllocateInfo')
    allocInfo.sType = vk.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
    allocInfo.descriptorPool = descriptorPool[0]
    allocInfo.descriptorSetCount = 1
    allocInfo.pSetLayouts = self.imageDescriptorSetLayoutPtr
 
-   vk.vkAllocateDescriptorSets(self.device, allocInfo, imageDescriptorSetPtr)
-   self.imageDescriptorSet = imageDescriptorSetPtr[0]
+   vk.vkAllocateDescriptorSets(self.device, allocInfo, self.imageDescriptorSetPtr)
+   self.imageDescriptorSet = self.imageDescriptorSetPtr[0]
 end
 
 function Gpu:CreatePipeline(vertShaderModule, fragShaderModule)
@@ -584,8 +584,6 @@ function Gpu:DrawStart()
    renderPassInfo.renderArea.offset.x = 0
    renderPassInfo.renderArea.offset.y = 0
    renderPassInfo.renderArea.extent = self.swapchainExtent
-   -- print("render", swapchainExtent.width, swapchainExtent.height,
-   --    renderPassInfo.renderArea.extent.width, renderPassInfo.renderArea.extent.height)
 
    local clearColor = ffi.new('VkClearValue[1]', {{{{0.0, 0.0, 0.0, 1.0}}}})
    renderPassInfo.clearValueCount = 1;
@@ -593,24 +591,24 @@ function Gpu:DrawStart()
 
    vk.vkCmdBeginRenderPass(self.commandBuffer, renderPassInfo, vk.VK_SUBPASS_CONTENTS_INLINE)
 
-   boundPipeline = nil
-   boundDescriptorSet = nil
+   self.boundPipeline = nil
+   self.boundDescriptorSet = nil
 end
 
 function Gpu:Draw(pipeline, ...)
-   if boundPipeline ~= pipeline then
-      vk.vkCmdBindPipeline(self.commandBuffer, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline)
-      boundPipeline = pipeline
+   if self.boundPipeline ~= pipeline then
+      vk.vkCmdBindPipeline(self.commandBuffer, vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
+         pipeline.pipeline)
+      self.boundPipeline = pipeline
    end
 
-   -- if (boundDescriptorSet != imageDescriptorSet) {
-   --    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-   --       pipeline.pipelineLayout, 0, 1, &imageDescriptorSet, 0, NULL);
-   --    boundDescriptorSet = imageDescriptorSet;
-   -- }
+   if self.boundDescriptorSet ~= self.imageDescriptorSet then
+      vk.vkCmdBindDescriptorSets(self.commandBuffer, vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
+         pipeline.pipelineLayout, 0, 1, self.imageDescriptorSetPtr, 0, nil)
+      self.boundDescriptorSet = self.imageDescriptorSet
+   end
 
    local pushConstantsData = ffi.new(pipeline.structName, ...)
-   -- TODO: convert push constants, check size
    vk.vkCmdPushConstants(self.commandBuffer, pipeline.pipelineLayout,
       bit.bor(vk.VK_SHADER_STAGE_VERTEX_BIT, vk.VK_SHADER_STAGE_FRAGMENT_BIT), 0,
       ffi.sizeof(pipeline.structName), pushConstantsData)
