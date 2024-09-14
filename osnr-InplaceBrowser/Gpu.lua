@@ -12,8 +12,10 @@ function Gpu:New()
 
    local gpu = setmetatable({}, Gpu)
    gpu:Init()
+   gpu:InitImageManagement()
    return gpu
 end
+function Gpu:GetMaxImages() return 16 end
 
 function Gpu:Init()
    local createInfo = ffi.new('VkInstanceCreateInfo')
@@ -326,6 +328,45 @@ function Gpu:Init()
    self.imageIndexPtr = ffi.new('uint32_t[1]')
 end
 
+function Gpu:InitImageManagement()
+   local bindings = ffi.new('VkDescriptorSetLayoutBinding[1]')
+   bindings[0].binding = 0
+   bindings[0].descriptorType = vk.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+   bindings[0].descriptorCount = self:GetMaxImages()
+   bindings[0].stageFlags = vk.VK_SHADER_STAGE_FRAGMENT_BIT
+
+   local createInfo = ffi.new('VkDescriptorSetLayoutCreateInfo')
+   createInfo.sType = vk.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
+   createInfo.bindingCount = 1
+   createInfo.pBindings = bindings
+
+   self.imageDescriptorSetLayoutPtr = ffi.new('VkDescriptorSetLayout[1]')
+   vk.vkCreateDescriptorSetLayout(self.device, createInfo, nil, self.imageDescriptorSetLayoutPtr)
+   self.imageDescriptorSetLayout = self.imageDescriptorSetLayoutPtr[0]
+
+   local descriptorPool = ffi.new('VkDescriptorPool[1]')
+   local poolSize = ffi.new('VkDescriptorPoolSize')
+   poolSize.type = vk.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+   poolSize.descriptorCount = 512
+
+   local poolInfo = ffi.new('VkDescriptorPoolCreateInfo')
+   poolInfo.sType = vk.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
+   poolInfo.poolSizeCount = 1
+   poolInfo.pPoolSizes = poolSize
+   poolInfo.maxSets = 100
+   assert(vk.vkCreateDescriptorPool(self.device, poolInfo, nil, descriptorPool) == 0)
+
+   local imageDescriptorSetPtr = ffi.new('VkDescriptorSet[1]')
+   local allocInfo = ffi.new('VkDescriptorSetAllocateInfo')
+   allocInfo.sType = vk.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
+   allocInfo.descriptorPool = descriptorPool[0]
+   allocInfo.descriptorSetCount = 1
+   allocInfo.pSetLayouts = self.imageDescriptorSetLayoutPtr
+
+   vk.vkAllocateDescriptorSets(self.device, allocInfo, imageDescriptorSetPtr)
+   self.imageDescriptorSet = imageDescriptorSetPtr[0]
+end
+
 function Gpu:CreatePipeline(vertShaderModule, fragShaderModule)
    local shaderStages = ffi.new('VkPipelineShaderStageCreateInfo[2]')
    vertShaderStageInfo = shaderStages[0]
@@ -416,11 +457,10 @@ function Gpu:CreatePipeline(vertShaderModule, fragShaderModule)
     colorBlending.attachmentCount = 1
     colorBlending.pAttachments = colorBlendAttachments
 
-    local pipelineLayoutInfos = ffi.new('VkPipelineLayoutCreateInfo[1]')
-    local pipelineLayoutInfo = pipelineLayoutInfos[0]
+    local pipelineLayoutInfo = ffi.new('VkPipelineLayoutCreateInfo')
     pipelineLayoutInfo.sType = vk.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
-    pipelineLayoutInfo.pSetLayouts = nil -- imageDescriptorSetLayouts
-    pipelineLayoutInfo.setLayoutCount = 0 -- 1
+    pipelineLayoutInfo.pSetLayouts = self.imageDescriptorSetLayoutPtr
+    pipelineLayoutInfo.setLayoutCount = 1
 
     -- We configure all pipelines with push constants size = 128 (the
     -- maximum), no matter what actual push constants they take; this
@@ -434,7 +474,7 @@ function Gpu:CreatePipeline(vertShaderModule, fragShaderModule)
     pipelineLayoutInfo.pushConstantRangeCount = 1
 
     local pipelineLayouts = ffi.new('VkPipelineLayout[1]')
-    if vk.vkCreatePipelineLayout(self.device, pipelineLayoutInfos, nil, pipelineLayouts) ~= 0 then
+    if vk.vkCreatePipelineLayout(self.device, pipelineLayoutInfo, nil, pipelineLayouts) ~= 0 then
        error('gpu: vkCreatePipelineLayout failed')
     end
     local pipelineLayout = pipelineLayouts[0]
