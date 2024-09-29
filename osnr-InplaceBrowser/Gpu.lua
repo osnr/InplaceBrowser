@@ -181,7 +181,7 @@ function Gpu:Init()
 
    local swapchains = ffi.new('VkSwapchainKHR[1]')
    self.swapchains = swapchains
-   if vk.vkCreateSwapchainKHR(device, swapchainCreateInfos, NULL, swapchains) ~= 0 then
+   if vk.vkCreateSwapchainKHR(device, swapchainCreateInfos, nil, swapchains) ~= 0 then
       error('gpu: vkCreateSwapchainKHR failed')
    end
    local swapchain = swapchains[0]; self.swapchain = swapchain
@@ -294,6 +294,7 @@ function Gpu:Init()
       error('gpu: vkCreateCommandPool failed')
    end
    local commandPool = commandPools[0]
+   self.commandPool = commandPool
 
    local allocInfos = ffi.new('VkCommandBufferAllocateInfo[1]')
    local allocInfo = allocInfos[0]
@@ -378,9 +379,17 @@ function Gpu:CopyImageToGpu(im)
    local imageHandle = self._nextImageHandle
    self._nextImageHandle = imageHandle + 1
 
+   local block = {
+      imageHandle = imageHandle,
+      textureImage = ffi.new('VkImage[1]'),
+      textureImageMemory = ffi.new('VkDeviceMemory[1]'),
+      textureImageView = ffi.new('VkImageView[1]'),
+      textureSampler = ffi.new('VkSampler[1]')
+   }
+
    local function findMemoryType(typeFilter, properties)
       local memProperties = ffi.new('VkPhysicalDeviceMemoryProperties')
-      vkGetPhysicalDeviceMemoryProperties(self.physicalDevice, memProperties)
+      vk.vkGetPhysicalDeviceMemoryProperties(self.physicalDevice, memProperties)
 
       for i = 0, memProperties.memoryTypeCount - 1 do
          if bit.band(typeFilter, bit.lshift(1, i)) ~= 0 and bit.band(memProperties.memoryTypes[i].propertyFlags, properties) == properties then
@@ -396,18 +405,18 @@ function Gpu:CopyImageToGpu(im)
       bufferInfo.usage = usage
       bufferInfo.sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE
 
-      assert(vk.vkCreateBuffer(device, bufferInfo, nil, buffer) == 0)
+      assert(vk.vkCreateBuffer(self.device, bufferInfo, nil, buffer) == 0)
 
       local memRequirements = ffi.new('VkMemoryRequirements')
-      vkGetBufferMemoryRequirements(device, buffer[0], memRequirements)
+      vk.vkGetBufferMemoryRequirements(self.device, buffer[0], memRequirements)
 
       local allocInfo = ffi.new('VkMemoryAllocateInfo')
       allocInfo.sType = vk.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO
       allocInfo.allocationSize = memRequirements.size
       allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
 
-      assert(vkAllocateMemory(device, allocInfo, nil, bufferMemory) == 0)
-      vkBindBufferMemory(device, buffer[0], bufferMemory[0], 0)
+      assert(vk.vkAllocateMemory(self.device, allocInfo, nil, bufferMemory) == 0)
+      vk.vkBindBufferMemory(self.device, buffer[0], bufferMemory[0], 0)
    end
    local function createImage(width, height, format, tiling, usage, properties, image, imageMemory)
       local imageInfo = ffi.new("VkImageCreateInfo")
@@ -425,30 +434,29 @@ function Gpu:CopyImageToGpu(im)
       imageInfo.samples = vk.VK_SAMPLE_COUNT_1_BIT
       imageInfo.sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE
 
-      local image = ffi.new("VkImage[1]")
-      assert(vk.vkCreateImage(device, imageInfo, nil, image) == 0)
+      assert(vk.vkCreateImage(self.device, imageInfo, nil, image) == 0)
 
       local memRequirements = ffi.new("VkMemoryRequirements")
-      vk.vkGetImageMemoryRequirements(device, image[0], memRequirements)
+      vk.vkGetImageMemoryRequirements(self.device, image[0], memRequirements)
 
       local allocInfo = ffi.new("VkMemoryAllocateInfo")
       allocInfo.sType = vk.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO
       allocInfo.allocationSize = memRequirements.size
       allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
 
-      assert(vk.vkAllocateMemory(device, allocInfo, nil, imageMemory) == 0)
-      vk.vkBindImageMemory(device, image[0], imageMemory[0], 0)
+      assert(vk.vkAllocateMemory(self.device, allocInfo, nil, imageMemory) == 0)
+      vk.vkBindImageMemory(self.device, image[0], imageMemory[0], 0)
    end
    local function beginSingleTimeCommands()
       local allocInfo = ffi.new("VkCommandBufferAllocateInfo", {
          sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
          level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-         commandPool = commandPool,
+         commandPool = self.commandPool,
          commandBufferCount = 1
       })
 
       local commandBuffer = ffi.new("VkCommandBuffer[1]")
-      assert(vk.vkAllocateCommandBuffers(device, allocInfo, commandBuffer[0]) == 0)
+      assert(vk.vkAllocateCommandBuffers(self.device, allocInfo, commandBuffer) == 0)
 
       local beginInfo = ffi.new("VkCommandBufferBeginInfo", {
          sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -471,26 +479,26 @@ function Gpu:CopyImageToGpu(im)
       assert(vk.vkQueueSubmit(graphicsQueue, 1, submitInfo, vk.VK_NULL_HANDLE) == 0)
       assert(vk.vkQueueWaitIdle(graphicsQueue) == 0)
 
-      vk.vkFreeCommandBuffers(device, commandPool, 1, commandBuffer)
+      vk.vkFreeCommandBuffers(self.device, self.commandPool, 1, commandBuffer)
    end
    local function transitionImageLayout(image, format, oldLayout, newLayout)
       local commandBuffer = beginSingleTimeCommands()
 
-      local barrier = ffi.new("VkImageMemoryBarrier", {
-         sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-         oldLayout = oldLayout,
-         newLayout = newLayout,
-         srcQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
-         dstQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
-         image = image,
-         subresourceRange = {
-            aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
-            baseMipLevel = 0,
-            levelCount = 1,
-            baseArrayLayer = 0,
-            layerCount = 1
-         }
-      })
+      local barrier = ffi.new("VkImageMemoryBarrier")
+      ffi.fill(barrier, ffi.sizeof(barrier))
+      barrier.sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER
+      barrier.oldLayout = oldLayout
+      barrier.newLayout = newLayout
+      barrier.srcQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED
+      barrier.dstQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED
+      barrier.image = image[0]
+      barrier.subresourceRange = {
+         aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+         baseMipLevel = 0,
+         levelCount = 1,
+         baseArrayLayer = 0,
+         layerCount = 1
+      }
 
       local sourceStage, destinationStage
       if oldLayout == vk.VK_IMAGE_LAYOUT_UNDEFINED and newLayout == vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL then
@@ -519,7 +527,7 @@ function Gpu:CopyImageToGpu(im)
 
    -- TODO: Image must be RGBA.
 
-   local size = im.width * im.height * 4;
+   local size = im.width * im.height * 4
 
    local stagingBuffer = ffi.new("VkBuffer[1]")
    local stagingBufferMemory = ffi.new("VkDeviceMemory[1]")
@@ -535,7 +543,7 @@ function Gpu:CopyImageToGpu(im)
 
    local viewInfo = ffi.new("VkImageViewCreateInfo", {
       sType = vk.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-      image = block.textureImage,
+      image = block.textureImage[0],
       viewType = vk.VK_IMAGE_VIEW_TYPE_2D,
       format = vk.VK_FORMAT_R8G8B8A8_SRGB,
       subresourceRange = {
@@ -546,7 +554,7 @@ function Gpu:CopyImageToGpu(im)
          layerCount = 1
       }
    })
-   assert(vk.vkCreateImageView(device, viewInfo, nil, block.textureImageView) == 0)
+   assert(vk.vkCreateImageView(self.device, viewInfo, nil, block.textureImageView) == 0)
 
    local samplerInfo = ffi.new("VkSamplerCreateInfo", {
       sType = vk.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -565,14 +573,12 @@ function Gpu:CopyImageToGpu(im)
       minLod = 0.0,
       maxLod = 0.0
    })
-   assert(vk.vkCreateSampler(device, samplerInfo, nil, block.textureSampler) == 0)
+   assert(vk.vkCreateSampler(self.device, samplerInfo, nil, block.textureSampler) == 0)
 
    local data = ffi.new("void*[1]")
-   assert(vk.vkMapMemory(device, stagingBufferMemory[0], 0, size, 0, data) == 0)
-   -- for y = 0, im.height - 1 do
-   --    ffi.copy(data[0] + y * im.width * 4, im.data + y * im.bytesPerRow, im.width * 4)
-   -- end
-   vk.vkUnmapMemory(device, stagingBufferMemory[0])
+   assert(vk.vkMapMemory(self.device, stagingBufferMemory[0], 0, size, 0, data) == 0)
+   ffi.copy(data, im.data, size)
+   vk.vkUnmapMemory(self.device, stagingBufferMemory[0])
 
    transitionImageLayout(block.textureImage, vk.VK_FORMAT_R8G8B8A8_SRGB,
       vk.VK_IMAGE_LAYOUT_UNDEFINED, vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
@@ -601,8 +607,8 @@ function Gpu:CopyImageToGpu(im)
    transitionImageLayout(block.textureImage, vk.VK_FORMAT_R8G8B8A8_SRGB,
       vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
-   vk.vkDestroyBuffer(device, stagingBuffer[0], nil)
-   vk.vkFreeMemory(device, stagingBufferMemory[0], nil)
+   vk.vkDestroyBuffer(self.device, stagingBuffer[0], nil)
+   vk.vkFreeMemory(self.device, stagingBufferMemory[0], nil)
 
    self.didInitializeDescriptors = false
    local imageInfo = ffi.new("VkDescriptorImageInfo", {
@@ -622,7 +628,7 @@ function Gpu:CopyImageToGpu(im)
          descriptorWrites[i].descriptorCount = 1
          descriptorWrites[i].pImageInfo = imageInfo
       end
-      vk.vkUpdateDescriptorSets(device, self:GetMaxImages(), descriptorWrites, 0, nil)
+      vk.vkUpdateDescriptorSets(self.device, self:GetMaxImages(), descriptorWrites, 0, nil)
       didInitializeDescriptors = true
    else
       local descriptorWrite = ffi.new("VkWriteDescriptorSet", {
@@ -634,7 +640,7 @@ function Gpu:CopyImageToGpu(im)
          descriptorCount = 1,
          pImageInfo = imageInfo
       })
-      vk.vkUpdateDescriptorSets(device, 1, descriptorWrite, 0, nil)
+      vk.vkUpdateDescriptorSets(self.device, 1, descriptorWrite, 0, nil)
    end
 
    return imageHandle
@@ -642,13 +648,13 @@ end
 
 function Gpu:CreatePipeline(vertShaderModule, fragShaderModule)
    local shaderStages = ffi.new('VkPipelineShaderStageCreateInfo[2]')
-   vertShaderStageInfo = shaderStages[0]
+   local vertShaderStageInfo = shaderStages[0]
    vertShaderStageInfo.sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO
    vertShaderStageInfo.stage = vk.VK_SHADER_STAGE_VERTEX_BIT
    vertShaderStageInfo.module = vertShaderModule
    vertShaderStageInfo.pName = "main"
 
-   fragShaderStageInfo = shaderStages[1]
+   local fragShaderStageInfo = shaderStages[1]
    fragShaderStageInfo.sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO
    fragShaderStageInfo.stage = vk.VK_SHADER_STAGE_FRAGMENT_BIT
    fragShaderStageInfo.module = fragShaderModule
@@ -783,6 +789,8 @@ function Gpu:CreatePipeline(vertShaderModule, fragShaderModule)
 end
 
 function Gpu:CreateShaderModule(spirv)
+   -- print("spirv", table.concat(spirv, ' '), 'elements', #spirv)
+
    local createInfo = ffi.new('VkShaderModuleCreateInfo')
    createInfo.sType = vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO
    createInfo.codeSize = #spirv * 4

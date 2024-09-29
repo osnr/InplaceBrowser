@@ -1,3 +1,4 @@
+require './vendor/strict'
 local Gpu = require 'Gpu'
 local ffi = require 'ffi'
 local glfw = Gpu.glfw

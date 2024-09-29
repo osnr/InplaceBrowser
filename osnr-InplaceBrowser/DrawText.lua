@@ -1,3 +1,6 @@
+package.path = package.path .. ";./vendor/?.lua"
+local png = require 'png'
+
 local glyphPrelude = [[
     #version 450
 
@@ -22,7 +25,7 @@ local glyphPrelude = [[
         return m * v;
     }
 ]]
-local glyphPipeline = gpu:CompilePipelineFromShaders(glyphPrelude..[[
+local glyphVert = glyphPrelude..[[
     void main() {
         float em = args.em;
         float radians = args.radians;
@@ -43,8 +46,8 @@ local glyphPipeline = gpu:CompilePipelineFromShaders(glyphPrelude..[[
         v = (2.0*v - args._resolution)/args._resolution;
         gl_Position = vec4(v, 0.0, 1.0);
     }
-]], glyphPrelude..[[
-
+]]
+local glyphFrag = glyphPrelude..[[
     layout(location = 0) out vec4 outColor;
 
     float cross2d(vec2 a, vec2 b) {
@@ -122,5 +125,30 @@ local glyphPipeline = gpu:CompilePipelineFromShaders(glyphPrelude..[[
             outColor = vec4(args.color.rgb, opacity * args.color.a);
         }
     }
-]])
+]]
 
+local ffi = require 'ffi'
+local function loadFont(gpu, fontname)
+   local fontPng = png.load_from_file(fontname..'.png')
+   assert(fontPng.color_type == 6)
+   local data = ffi.new('uint8_t[?]', fontPng.width * fontPng.height * 4)
+   for p, x, y in png.pixels(fontPng) do
+      local i = (y * fontPng.width + x) * 4
+      data[i] = p.r * 256
+      data[i + 1] = p.g * 256
+      data[i + 2] = p.b * 256
+      data[i + 3] = p.a * 256
+   end
+   local im = { width = fontPng.width, height = fontPng.height, data = data }
+   return gpu:CopyImageToGpu(im)
+end
+
+return function(gpu)
+   loadFont(gpu, 'vendor/fonts/PTSans-Regular')
+
+   local glyphPipeline = gpu:CompilePipelineFromShaders(glyphVert, glyphFrag)
+   local w, h = gpu.glfw.GetWindowSize(gpu.window)
+   return function(...)
+      gpu:Draw(glyphPipeline, {w, h}, ...)
+   end
+end
