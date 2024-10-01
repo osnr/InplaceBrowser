@@ -803,14 +803,20 @@ function Gpu:CreateShaderModule(spirv)
 end
 
 local function glslc(glsl, ...)
-   local n = os.tmpname()..'.glsl'
-   local f = io.open(n, 'w')
+   local n = os.tmpname()
+   local f = io.open(n..'.glsl', 'w')
    f:write(glsl); f:close()
 
-   local argv = {'glslc', ..., '-mfmt=num -o -', n}
-   local task = io.popen(table.concat(argv, ' '), 'r')
-   local nums; while nums == nil do nums = task:read('*a') end
-   task:close()
+   local argv = {'glslc', ..., '-mfmt=num',
+      '-o', n..'.num',
+      n..'.glsl'
+   }
+   local ret = os.execute(table.concat(argv, ' '))
+   assert(ret == 0)
+
+   local f = io.open(n..'.num', 'r')
+   local nums = f:read('*a'); f:close()
+
    local spirv = {}
    for token in string.gmatch(nums, '([^,\n]+)') do
       table.insert(spirv, tonumber(token))

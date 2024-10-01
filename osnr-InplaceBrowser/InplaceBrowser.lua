@@ -1,4 +1,6 @@
 require './vendor/strict'
+inspect = require './vendor/inspect'
+
 local Gpu = require 'Gpu'
 local ffi = require 'ffi'
 local glfw = Gpu.glfw
