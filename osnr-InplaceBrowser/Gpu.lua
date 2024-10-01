@@ -485,7 +485,6 @@ function Gpu:CopyImageToGpu(im)
       local commandBuffer = beginSingleTimeCommands()
 
       local barrier = ffi.new("VkImageMemoryBarrier")
-      ffi.fill(barrier, ffi.sizeof(barrier))
       barrier.sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER
       barrier.oldLayout = oldLayout
       barrier.newLayout = newLayout
@@ -810,7 +809,8 @@ local function glslc(glsl, ...)
 
    local argv = {'glslc', ..., '-mfmt=num -o -', n}
    local task = io.popen(table.concat(argv, ' '), 'r')
-   local nums = task:read('*a'); task:close()
+   local nums; while nums == nil do nums = task:read('*a') end
+   task:close()
    local spirv = {}
    for token in string.gmatch(nums, '([^,\n]+)') do
       table.insert(spirv, tonumber(token))
